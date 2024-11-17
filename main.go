@@ -17,9 +17,17 @@ func main() {
 		log.Fatalf("Unable to read client secret file: %v", err)
 	}
 
-	_ = driveSetup.GetDriveService(b)
+	driveService := driveSetup.GetDriveService(b)
 
-	driveSetup.SetupCronJobs()
+	if os.Getenv("BACKUPS_FOLDER_NAME") == "" {
+		log.Fatalf("BACKUPS_FOLDER_NAME is not set")
+	}
+
+	runningBackups := driveSetup.SetupCronJobs(driveService)
+
+	if runningBackups == 0 {
+		log.Fatalf("No backups found")
+	}
 
 	select {}
 }
