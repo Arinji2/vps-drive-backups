@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"regexp"
 
 	"google.golang.org/api/drive/v2"
 )
@@ -11,6 +12,7 @@ import (
 func getFiles(ctx context.Context, driveService *drive.Service, folder *drive.File) (files []*drive.File) {
 
 	pageToken := ""
+	var rawFiles []*drive.File
 
 	for {
 		query := fmt.Sprintf("'%s' in parents and trashed = false", folder.Id)
@@ -24,7 +26,7 @@ func getFiles(ctx context.Context, driveService *drive.Service, folder *drive.Fi
 			log.Fatalf("Unable to query files: %v", err)
 		}
 
-		files = append(files, fileList.Items...)
+		rawFiles = append(rawFiles, fileList.Items...)
 
 		pageToken = fileList.NextPageToken
 		if pageToken == "" {
@@ -32,9 +34,17 @@ func getFiles(ctx context.Context, driveService *drive.Service, folder *drive.Fi
 		}
 	}
 
-	for _, file := range files {
-		fmt.Println(file.Title)
+	for _, file := range rawFiles {
+		if verifyFileTitle(file) {
+			files = append(files, file)
+		}
 	}
 
 	return files
+}
+
+func verifyFileTitle(file *drive.File) bool {
+	pattern := `^[a-zA-Z0-9-_]+-\d{2}/\d{2}/\d{2}-\d+\.tar$`
+	re := regexp.MustCompile(pattern)
+	return re.MatchString(file.Title)
 }

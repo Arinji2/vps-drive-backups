@@ -132,6 +132,8 @@ func (b backupType) checkForOverride(ctx context.Context) {
 
 	files := getFiles(ctx, b.DriveService, selectedFolder)
 
-	fmt.Println(files)
+	for _, file := range files {
+		fmt.Println(file.Title)
+	}
 
 }
