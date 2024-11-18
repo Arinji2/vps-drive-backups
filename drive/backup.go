@@ -1,6 +1,7 @@
 package drive
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -11,12 +12,19 @@ import (
 	"google.golang.org/api/drive/v2"
 )
 
-type Backup struct {
-	Name       string `json:"name"`
-	FolderName string `json:"folder-name"`
-	BackupTime int    `json:"backup-time"`
-	MaxBackups int    `json:"max-backups"`
-	IsDisabled *bool  `json:"is-disabled"`
+type backupConfig struct {
+	Name        string `json:"name"`
+	FolderName  string `json:"folder-name"`
+	VPSLocation string `json:"vps-location"`
+	BackupTime  int    `json:"backup-time"`
+	MaxBackups  int    `json:"max-backups"`
+	IsDisabled  *bool  `json:"is-disabled"`
+}
+
+type backupType struct {
+	Config       backupConfig
+	BackupMU     *sync.Mutex
+	DriveService *drive.Service
 }
 
 func SetupCronJobs(driveService *drive.Service) (runningBackups int) {
@@ -26,7 +34,7 @@ func SetupCronJobs(driveService *drive.Service) (runningBackups int) {
 		if err != nil {
 			log.Fatalf("Unable to read backups.json: %v", err)
 		}
-		var backups []Backup
+		var backups []backupConfig
 		err = json.Unmarshal(file, &backups)
 		if err != nil {
 			log.Fatalf("Unable to unmarshal backups.json: %v", err)
@@ -40,10 +48,18 @@ func SetupCronJobs(driveService *drive.Service) (runningBackups int) {
 			}
 			ticker := time.NewTicker(time.Duration(backup.BackupTime) * time.Second)
 			runningBackups++
-			go func(b Backup) {
+			go func(b backupConfig) {
+
+				backup := backupType{
+					Config:       b,
+					BackupMU:     &sync.Mutex{},
+					DriveService: driveService,
+				}
 
 				for range ticker.C {
-					b.RunBackup()
+					ctx, cancel := context.WithTimeout(context.Background(), 1*time.Hour)
+					backup.runBackup(ctx)
+					cancel()
 				}
 			}(backup)
 		}
@@ -90,6 +106,32 @@ func verifyBackupFolder(driveService *drive.Service) (bool, string) {
 	}
 }
 
-func (b Backup) RunBackup() {
-	fmt.Printf("Running backup for %s\n", b.Name)
+func (b backupType) runBackup(ctx context.Context) {
+	b.BackupMU.Lock()
+	defer b.BackupMU.Unlock()
+	fmt.Printf("Running backup for %s\n", b.Config.Name)
+	b.checkForOverride(ctx)
+
+}
+
+func (b backupType) checkForOverride(ctx context.Context) {
+	fmt.Printf("Checking for override for %s\n", b.Config.Name)
+	folder, err := b.DriveService.Files.List().Q(fmt.Sprintf("mimeType='application/vnd.google-apps.folder' and title='%s'", b.Config.FolderName)).Do()
+	if err != nil {
+		_, err = b.DriveService.Files.Insert(&drive.File{
+			MimeType: "application/vnd.google-apps.folder",
+			Title:    b.Config.FolderName,
+		}).Do()
+
+		if err != nil {
+			log.Fatalf("Unable to create folder: %v. For Backup %s", err, b.Config.Name)
+		}
+		return
+	}
+	selectedFolder := folder.Items[0]
+
+	files := getFiles(ctx, &sync.Mutex{}, b.DriveService, selectedFolder)
+
+	fmt.Println(files)
+
 }
