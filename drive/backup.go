@@ -130,7 +130,7 @@ func (b backupType) checkForOverride(ctx context.Context) {
 	}
 	selectedFolder := folder.Items[0]
 
-	files := getFiles(ctx, &sync.Mutex{}, b.DriveService, selectedFolder)
+	files := getFiles(ctx, b.DriveService, selectedFolder)
 
 	fmt.Println(files)
 

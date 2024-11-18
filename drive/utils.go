@@ -4,14 +4,11 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"sync"
 
 	"google.golang.org/api/drive/v2"
 )
 
-func getFiles(ctx context.Context, dataMu *sync.Mutex, driveService *drive.Service, folder *drive.File) (files []*drive.File) {
-	dataMu.Lock()
-	defer dataMu.Unlock()
+func getFiles(ctx context.Context, driveService *drive.Service, folder *drive.File) (files []*drive.File) {
 
 	pageToken := ""
 
@@ -33,6 +30,10 @@ func getFiles(ctx context.Context, dataMu *sync.Mutex, driveService *drive.Servi
 		if pageToken == "" {
 			break
 		}
+	}
+
+	for _, file := range files {
+		fmt.Println(file.Title)
 	}
 
 	return files
