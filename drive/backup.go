@@ -148,8 +148,9 @@ func (b backupType) checkForOverride(ctx context.Context) {
 
 	files = b.verifyFiles(files)
 
-	for _, file := range files {
-		fmt.Println(file.Title)
+	if len(files) == b.Config.MaxBackups {
+		fmt.Printf("BACKUP: %s \n Max backups reached of %d. Deleting oldest backup", b.Config.Name, b.Config.MaxBackups)
+		files = b.deleteOldBackup(ctx, files)
 	}
 
 }
@@ -209,14 +210,12 @@ func (b backupType) verifyFiles(files []*drive.File) []*drive.File {
 
 	var verifiedFiles []*drive.File
 
-	// Check backup index order and time difference
 	for i := 0; i < len(dateBackups); i++ {
-		// Check index order
+
 		if i > 0 && dateBackups[i].backupIndex != dateBackups[i-1].backupIndex+1 {
 			continue
 		}
 
-		// Check time difference between backups
 		if i > 0 {
 			timeDiff := dateBackups[i].backupDate.Sub(dateBackups[i-1].backupDate)
 			expectedInterval := time.Duration(b.Config.BackupTime) * (time.Hour * 24)
@@ -226,9 +225,46 @@ func (b backupType) verifyFiles(files []*drive.File) []*drive.File {
 			}
 		}
 
-		// If both checks pass, add to verified files
 		verifiedFiles = append(verifiedFiles, dateBackups[i].file)
 	}
 
 	return verifiedFiles
+}
+
+func (b backupType) deleteOldBackup(ctx context.Context, files []*drive.File) []*drive.File {
+	oldestBackup := files[0]
+	files = files[1:]
+
+	err := b.DriveService.Files.Delete(oldestBackup.Id).Context(ctx).Do()
+	if err != nil {
+		log.Fatalf("Unable to delete oldest backup: %v", err)
+	}
+
+	var wg sync.WaitGroup
+	for i, file := range files {
+		wg.Add(1)
+
+		go func(i int, file *drive.File) {
+			defer wg.Done()
+			parts := strings.Split(file.Title, "-")
+			name := parts[0]
+			date := parts[1]
+
+			_, err := b.DriveService.Files.Update(file.Id, &drive.File{
+				Title: fmt.Sprintf("%s-%s-%d.tar.gz", name, date, i+1),
+			}).Context(ctx).Do()
+
+			if err != nil {
+				log.Fatalf("Unable to update backup file: %v", err)
+			}
+
+			newFileName := fmt.Sprintf("%s-%s-%d.tar.gz", name, date, i+1)
+			files[i].Title = newFileName
+
+		}(i, file)
+	}
+
+	wg.Wait()
+
+	return files
 }
