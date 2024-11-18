@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"sort"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -13,12 +16,13 @@ import (
 )
 
 type backupConfig struct {
-	Name        string `json:"name"`
-	FolderName  string `json:"folder-name"`
-	VPSLocation string `json:"vps-location"`
-	BackupTime  int    `json:"backup-time"`
-	MaxBackups  int    `json:"max-backups"`
-	IsDisabled  *bool  `json:"is-disabled"`
+	Name         string `json:"name"`
+	FolderName   string `json:"folder-name"`
+	VPSLocation  string `json:"vps-location"`
+	BackupTime   int    `json:"backup-time"`
+	MaxBackups   int    `json:"max-backups"`
+	IsDisabled   *bool  `json:"is-disabled"`
+	RunInitially *bool  `json:"run-initially"`
 }
 
 type backupType struct {
@@ -27,9 +31,10 @@ type backupType struct {
 	DriveService *drive.Service
 }
 
-func SetupCronJobs(driveService *drive.Service) (runningBackups int) {
+func SetupCronJobs(driveService *drive.Service) (runningBackups int, initialBackups []backupType) {
 
 	sync.OnceFunc(func() {
+
 		file, err := os.ReadFile("backups.json")
 		if err != nil {
 			log.Fatalf("Unable to read backups.json: %v", err)
@@ -46,8 +51,16 @@ func SetupCronJobs(driveService *drive.Service) (runningBackups int) {
 				fmt.Printf("Skipping %s\n", backup.Name)
 				continue
 			}
-			ticker := time.NewTicker(time.Duration(backup.BackupTime) * time.Second)
+			ticker := time.NewTicker(time.Duration(backup.BackupTime) * (time.Hour * 24))
 			runningBackups++
+			if *backup.RunInitially {
+				backup := backupType{
+					Config:       backup,
+					BackupMU:     &sync.Mutex{},
+					DriveService: driveService,
+				}
+				initialBackups = append(initialBackups, backup)
+			}
 			go func(b backupConfig) {
 
 				backup := backupType{
@@ -58,7 +71,7 @@ func SetupCronJobs(driveService *drive.Service) (runningBackups int) {
 
 				for range ticker.C {
 					ctx, cancel := context.WithTimeout(context.Background(), 1*time.Hour)
-					backup.runBackup(ctx)
+					backup.RunBackup(ctx)
 					cancel()
 				}
 			}(backup)
@@ -77,7 +90,7 @@ func SetupCronJobs(driveService *drive.Service) (runningBackups int) {
 
 	})()
 
-	return runningBackups
+	return runningBackups, initialBackups
 }
 
 // Verify backup folder exists. Creates it if not.
@@ -106,9 +119,10 @@ func verifyBackupFolder(driveService *drive.Service) (bool, string) {
 	}
 }
 
-func (b backupType) runBackup(ctx context.Context) {
+func (b backupType) RunBackup(ctx context.Context) {
 	b.BackupMU.Lock()
 	defer b.BackupMU.Unlock()
+	defer fmt.Println("Finished backup for", b.Config.Name)
 	fmt.Printf("Running backup for %s\n", b.Config.Name)
 	b.checkForOverride(ctx)
 
@@ -132,8 +146,95 @@ func (b backupType) checkForOverride(ctx context.Context) {
 
 	files := getFiles(ctx, b.DriveService, selectedFolder)
 
+	files = b.verifyFiles(files)
+
 	for _, file := range files {
 		fmt.Println(file.Title)
 	}
 
+}
+
+func (b backupType) verifyFiles(files []*drive.File) []*drive.File {
+	type backupWithDate struct {
+		file        *drive.File
+		backupName  string
+		backupDate  time.Time
+		backupIndex int
+	}
+
+	var dateBackups []backupWithDate
+
+	for _, file := range files {
+
+		fmt.Println(file.MimeType)
+
+		if file.MimeType != "application/gzip" {
+			continue
+		}
+
+		parts := strings.Split(file.Title, "-")
+		if len(parts) < 3 {
+			continue
+		}
+
+		backupName := parts[0]
+		backupDate := parts[1]
+		backupIndexStr := strings.Replace(parts[2], ".tar.gz", "", 1)
+
+		if backupName != b.Config.Name {
+			continue
+		}
+
+		backupIndex, err := strconv.Atoi(backupIndexStr)
+
+		if err != nil || backupIndex > b.Config.MaxBackups {
+			continue
+		}
+
+		parsedDate, err := time.Parse("02/01/06", backupDate)
+		if err != nil {
+			fmt.Println("Error parsing date:", err)
+			continue
+		}
+
+		dateBackups = append(dateBackups, backupWithDate{
+			file:        file,
+			backupName:  backupName,
+			backupDate:  parsedDate,
+			backupIndex: backupIndex,
+		})
+	}
+
+	sort.Slice(dateBackups, func(i, j int) bool {
+		return dateBackups[i].backupIndex < dateBackups[j].backupIndex
+	})
+
+	var verifiedFiles []*drive.File
+
+	for _, backup := range dateBackups {
+		fmt.Println(backup.backupIndex)
+	}
+
+	// Check backup index order and time difference
+	for i := 0; i < len(dateBackups); i++ {
+		// Check index order
+		if i > 0 && dateBackups[i].backupIndex != dateBackups[i-1].backupIndex+1 {
+			continue
+		}
+
+		// Check time difference between backups
+		if i > 0 {
+			timeDiff := dateBackups[i].backupDate.Sub(dateBackups[i-1].backupDate)
+			expectedInterval := time.Duration(b.Config.BackupTime) * (time.Hour * 24)
+
+			if timeDiff < expectedInterval || timeDiff > expectedInterval {
+				continue
+			}
+		}
+
+		// If both checks pass, add to verified files
+		verifiedFiles = append(verifiedFiles, dateBackups[i].file)
+	}
+
+	return verifiedFiles
 }
