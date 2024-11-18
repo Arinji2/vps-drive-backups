@@ -1,0 +1,21 @@
+# Create user without home directory
+sudo useradd -M readonly_user
+
+# Set a password for the user
+sudo passwd readonly_user
+
+# Remove the user from all groups except their primary group
+sudo usermod -G "" readonly_user
+
+# Create a custom umask configuration for the user
+echo 'readonly_user    umask=0444' | sudo tee -a /etc/login.defs
+
+# Remove write permissions for the user on their primary group
+sudo chmod o-w /etc/passwd
+sudo chmod o-w /etc/group
+
+# Set up sudoers to deny all sudo access
+echo 'readonly_user ALL=(ALL) !ALL' | sudo tee /etc/sudoers.d/readonly_user
+
+# Verify the user's access
+sudo -u readonly_user ls -la /

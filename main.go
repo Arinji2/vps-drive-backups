@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	driveSetup "vps-drive-backups/drive"
+	"vps-drive-backups/server"
 
 	_ "github.com/joho/godotenv/autoload"
 )
@@ -28,6 +29,8 @@ func main() {
 	if runningBackups == 0 {
 		log.Fatalf("No backups found")
 	}
+
+	server.SSHIntoServer()
 
 	select {}
 }
