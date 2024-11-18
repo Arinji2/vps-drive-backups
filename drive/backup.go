@@ -166,8 +166,6 @@ func (b backupType) verifyFiles(files []*drive.File) []*drive.File {
 
 	for _, file := range files {
 
-		fmt.Println(file.MimeType)
-
 		if file.MimeType != "application/gzip" {
 			continue
 		}
@@ -210,10 +208,6 @@ func (b backupType) verifyFiles(files []*drive.File) []*drive.File {
 	})
 
 	var verifiedFiles []*drive.File
-
-	for _, backup := range dateBackups {
-		fmt.Println(backup.backupIndex)
-	}
 
 	// Check backup index order and time difference
 	for i := 0; i < len(dateBackups); i++ {
