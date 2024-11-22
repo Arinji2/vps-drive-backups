@@ -1,16 +1,17 @@
 package server
 
 import (
-	"bytes"
 	"fmt"
+	"io"
 	"log"
 	"os"
+	"strings"
 	"time"
 
 	"golang.org/x/crypto/ssh"
 )
 
-func SSHIntoServer() {
+func connectToServer() (*ssh.Session, *ssh.Client) {
 	sshIP := os.Getenv("SSH_IP")
 	sshUser := os.Getenv("SSH_USER")
 	sshPwd := os.Getenv("SSH_PWD")
@@ -28,37 +29,47 @@ func SSHIntoServer() {
 	if err != nil {
 		panic(err)
 	}
-	defer client.Close()
 
 	session, err := client.NewSession()
 	if err != nil {
 		panic(err)
 	}
+
+	return session, client
+}
+
+func SSHIntoServer() {
+	session, client := connectToServer()
+	defer client.Close()
 	defer session.Close()
 
 	fmt.Println("Connected via SSH successfully")
-	fmt.Println("Starting SSH Permissions Testing")
 
-	err = session.Run("touch test.txt")
-	if err == nil {
-		fmt.Println("This user has access to create files. Please make the backups user readonly")
+}
 
-		err = session.Run("rm test.txt")
-		if err == nil {
-			log.Fatal("This user has access to delete files. Please make the backups user readonly")
-		} else {
-			log.Fatal("This file was not able to be deleted. Please delete the file 'test.txt' ")
-		}
+func GetBackup(vpsLocation string) io.Reader {
+	session, client := connectToServer()
+	defer session.Close()
+	defer client.Close()
 
+	// Run the remote commands to create and encode the tar.gz
+	commands := []string{
+		fmt.Sprintf("cd %s", vpsLocation),
+		"tar -cf - --transform='s|^\\./||' . 2>/dev/null | gzip -9",
+	}
+	command := strings.Join(commands, " && ")
+
+	// Capture the output of the command
+	stdout, err := session.StdoutPipe()
+	if err != nil {
+		log.Fatalf("Failed to get stdout pipe: %v", err)
 	}
 
-	var stdout bytes.Buffer
-	session.Stdout = &stdout
-	session.Run("groups | grep -q sudo; echo $?")
-	if (stdout.String()) == "0\n" {
-		fmt.Println("This user has sudo access. Please make the backups user readonly")
+	// Start the command execution
+	if err := session.Start(command); err != nil {
+		log.Fatalf("Failed to run remote command: %v", err)
 	}
 
-	fmt.Printf("\n\n\n\n\n PERMISSIONS TESTING COMPLETED \n\n\n\n\n")
-
+	// Return the raw gzip data as an io.Reader
+	return stdout
 }

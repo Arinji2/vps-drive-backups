@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"vps-drive-backups/server"
 
 	"google.golang.org/api/drive/v2"
 )
@@ -152,6 +153,30 @@ func (b backupType) checkForOverride(ctx context.Context) {
 		fmt.Printf("BACKUP: %s \n Max backups reached of %d. Deleting oldest backup", b.Config.Name, b.Config.MaxBackups)
 		files = b.deleteOldBackup(ctx, files)
 	}
+	lastFile := files[len(files)-1]
+	newIndex, err := strconv.Atoi(strings.Replace(strings.Split(lastFile.Title, "-")[2], ".tar.gz", "", 1))
+	if err != nil {
+		log.Fatalf("Unable to parse backup index: %v", err)
+	}
+	backup := server.GetBackup(b.Config.VPSLocation)
+
+	fmt.Println("uploading backup")
+
+	parentRef := []*drive.ParentReference{{
+		Id: selectedFolder.Id,
+	}}
+
+	res, err := b.DriveService.Files.Insert(&drive.File{
+		Title:    fmt.Sprintf("%s-%s-%d.tar.gz", b.Config.Name, time.Now().Format("02/01/06"), newIndex+1),
+		Parents:  parentRef,
+		MimeType: "application/gzip",
+	}).Media(backup).Context(ctx).Do()
+
+	if err != nil {
+		log.Fatalf("Unable to create backup: %v", err)
+	}
+
+	fmt.Println(res.Id, res.Title)
 
 }
 
